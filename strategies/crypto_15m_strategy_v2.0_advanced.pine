@@ -1,0 +1,227 @@
+//@version=5
+strategy("Crypto 15m Advanced Multi-Layer Strategy v2.0", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.05)
+
+/**
+ * ========================================
+ * 高級版：15分鐘虛擬貨幣超短線交易策略 v2.0
+ * 版本增強：背離識別 + K線型態 + 鸿鳥周期
+ * ========================================
+ * 新機能：
+ * - 背離偵測（底背離、頂背離）
+ * - K線床型態識別（陸頞粗、鬹顛算、吹坊線）
+ * - 遾側詳量分析
+ * - 動態止損(棘輪)策略
+ * - 詳量赢家詳量輸計
+ * ========================================
+ */
+
+// ============== 參數設定 ==============
+group_basic = "基本參數"
+group_ma = "均線參數"
+group_macd = "MACD參數"
+group_rsi = "RSI參數"
+group_atr = "ATR參數"
+group_advanced = "高級特性"
+group_risk = "風險管理"
+group_display = "顯示設定"
+
+// 基本參數
+initial_capital = input.float(1000, title="初始資金 ($)", group=group_basic)
+risk_per_trade = input.float(2.0, title="單筆風險百分比 (%)", minval=0.5, maxval=5, group=group_basic)
+risk_reward_ratio = input.float(1.5, title="風險損益比", minval=0.5, maxval=3, group=group_basic)
+
+// MA
+ma_fast_len = input.int(5, title="快速MA", minval=3, maxval=20, group=group_ma)
+ma_mid_len = input.int(20, title="中速MA", minval=10, maxval=50, group=group_ma)
+ma_slow_len = input.int(60, title="慢速MA", minval=30, maxval=200, group=group_ma)
+
+// MACD
+macd_fast = input.int(12, title="MACD快", minval=5, maxval=35, group=group_macd)
+macd_slow = input.int(26, title="MACD慢", minval=10, maxval=50, group=group_macd)
+macd_signal_len = input.int(9, title="MACD信號", minval=5, maxval=20, group=group_macd)
+
+// RSI
+rsi_len = input.int(14, title="RSI週期", minval=5, maxval=50, group=group_rsi)
+rsi_ob = input.float(70, title="RSI超買", minval=50, maxval=90, group=group_rsi)
+rsi_os = input.float(30, title="RSI超賣", minval=10, maxval=50, group=group_rsi)
+
+// ATR
+atr_len = input.int(14, title="ATR週期", minval=5, maxval=50, group=group_atr)
+atr_mult_sl = input.float(2.0, title="止損ATR倍", minval=1, maxval=3, group=group_atr)
+atr_mult_tp = input.float(3.0, title="止盈ATR倍", minval=1.5, maxval=5, group=group_atr)
+
+// 高級特性
+use_divergence = input.bool(true, title="使用背離識別", group=group_advanced)
+use_pattern = input.bool(true, title="使用K線型態", group=group_advanced)
+use_volume_profile = input.bool(true, title="使用詳量享一冨", group=group_advanced)
+divergence_bars = input.int(5, title="背離確認根數", minval=2, maxval=10, group=group_advanced)
+use_trailing_stop = input.bool(true, title="使用棘輪止損", group=group_advanced)
+
+// 風險管理
+max_losses = input.int(3, title="連續虧損停止筆數", minval=1, maxval=10, group=group_risk)
+position_limit = input.int(1, title="同時持倉数上限", minval=1, maxval=3, group=group_risk)
+
+// 顯示
+show_ma = input.bool(true, title="顯示均線", group=group_display)
+show_signals = input.bool(true, title="顯示詳量享一冨", group=group_display)
+show_patterns = input.bool(true, title="顯示K線型態", group=group_display)
+show_info = input.bool(true, title="顯示統計信息", group=group_display)
+
+// ============== 計算指標 ==============
+
+ma_f = ta.sma(close, ma_fast_len)
+ma_m = ta.sma(close, ma_mid_len)
+ma_s = ta.sma(close, ma_slow_len)
+
+[macd, macd_sig, macd_h] = ta.macd(close, macd_fast, macd_slow, macd_signal_len)
+rsi_val = ta.rsi(close, rsi_len)
+atr_val = ta.atr(atr_len)
+atr_basis = ta.sma(atr_val, 30)
+atr_r = atr_val / atr_basis
+
+vol_sma = ta.sma(volume, 20)
+vol_r = volume / vol_sma
+
+// ============== 趨勢判斷 ==============
+
+uptrend = ma_f > ma_m and ma_m > ma_s
+downtrend = ma_f < ma_m and ma_m < ma_s
+
+// ============== 背離識別 ==============
+
+// 底背離：價格新低，MACD未新低
+var float lowest_price = na
+var float lowest_macd = na
+var int lowest_bar = 0
+
+if low < nz(lowest_price, high)
+    lowest_price := low
+    lowest_macd := macd
+    lowest_bar := bar_index
+
+bottom_div = uptrend and (bar_index - lowest_bar <= divergence_bars) and low < lowest_price and macd > lowest_macd
+
+// 頂背離：價格新高，MACD未新高
+var float highest_price = na
+var float highest_macd = na
+var int highest_bar = 0
+
+if high > nz(highest_price, low)
+    highest_price := high
+    highest_macd := macd
+    highest_bar := bar_index
+
+top_div = downtrend and (bar_index - highest_bar <= divergence_bars) and high > highest_price and macd < highest_macd
+
+// ============== K線型態識別 ==============
+
+// 陸頞粗（Hammer）算彙：下影线较長，体齐较短，上影线很短
+hammer = ((high - close) < (0.1 * (high - low))) and ((close - low) > (0.6 * (high - low))) and ((open - low) > (0.1 * (high - low)))
+
+// 鬹顛算彵：上影线较長，体齐较短，下影线很短
+inverted_hammer = ((close - low) < (0.1 * (high - low))) and ((high - close) > (0.6 * (high - low))) and ((high - open) > (0.1 * (high - low)))
+
+// 吹坊線（Engulfing）
+bullish_engulfing = (close[1] < open[1]) and (close > open) and (open <= close[1]) and (close >= open[1])
+bearish_engulfing = (close[1] > open[1]) and (close < open) and (open >= close[1]) and (close <= open[1])
+
+// ============== 詳量分析 ==============
+
+// 詳量享一冨
+vol_climax_buy = vol_r > 3.0 and close > open and uptrend
+vol_climax_sell = vol_r > 3.0 and close < open and downtrend
+
+// ============== 複合信號 ==============
+
+// MACD + RSI
+macd_bullish = ta.crossover(macd, macd_sig) and macd > 0
+macd_bearish = ta.crossunder(macd, macd_sig) and macd < 0
+rsi_from_os = ta.crossover(rsi_val, rsi_os)
+rsi_to_ob = rsi_val < rsi_ob and rsi_val > 50
+
+// 超短線买点
+long_entry_signal = uptrend and (macd_bullish or rsi_from_os) and vol_r > 1.5 and (not use_divergence or bottom_div or hammer or bullish_engulfing)
+
+// 超短線賣点
+short_entry_signal = downtrend and (macd_bearish or rsi_val < (100 - rsi_os)) and vol_r > 1.5 and (not use_divergence or top_div or inverted_hammer or bearish_engulfing)
+
+// ============== 進場點位管理 ==============
+
+var float long_entry = na
+var float short_entry = na
+var float long_sl = na
+var float short_sl = na
+var float long_tp = na
+var float short_tp = na
+
+if long_entry_signal and strategy.position_size == 0
+    long_entry := close
+    long_sl := close - (atr_val * atr_mult_sl)
+    long_tp := close + (atr_val * atr_mult_tp)
+    strategy.entry("Long", strategy.long)
+
+if short_entry_signal and strategy.position_size == 0
+    short_entry := close
+    short_sl := close + (atr_val * atr_mult_sl)
+    short_tp := close - (atr_val * atr_mult_tp)
+    strategy.entry("Short", strategy.short)
+
+// ============== 止損止盈基残敵馶 ==============
+
+if strategy.position_size > 0
+    strategy.exit("Long Exit", from_entry="Long", stop=long_sl, limit=long_tp)
+
+if strategy.position_size < 0
+    strategy.exit("Short Exit", from_entry="Short", stop=short_sl, limit=short_tp)
+
+// ============== 棘輪止損 ==============
+
+if use_trailing_stop
+    if strategy.position_size > 0
+        long_sl := max(nz(long_sl, close - atr_val * atr_mult_sl), close - atr_val * atr_mult_sl * 0.8)
+    
+    if strategy.position_size < 0
+        short_sl := min(nz(short_sl, close + atr_val * atr_mult_sl), close + atr_val * atr_mult_sl * 0.8)
+
+// ============== 可視化 ==============
+
+if show_ma
+    plot(ma_f, title="MA5", color=color.blue, linewidth=1)
+    plot(ma_m, title="MA20", color=color.orange, linewidth=1)
+    plot(ma_s, title="MA60", color=color.red, linewidth=1)
+
+if show_signals
+    plotshape(long_entry_signal, title="Long Signal", style=shape.labelup, location=location.belowbar, color=color.green, textcolor=color.white, size=size.small)
+    plotshape(short_entry_signal, title="Short Signal", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.small)
+
+if show_patterns and use_pattern
+    plotshape(hammer and uptrend, title="Hammer", style=shape.circle, location=location.belowbar, color=color.new(color.green, 50), size=size.tiny)
+    plotshape(inverted_hammer and downtrend, title="Inverted Hammer", style=shape.circle, location=location.abovebar, color=color.new(color.red, 50), size=size.tiny)
+    plotshape(bullish_engulfing, title="Bullish Engulfing", style=shape.diamond, location=location.belowbar, color=color.new(color.green, 70), size=size.tiny)
+    plotshape(bearish_engulfing, title="Bearish Engulfing", style=shape.diamond, location=location.abovebar, color=color.new(color.red, 70), size=size.tiny)
+
+if show_signals and use_volume_profile
+    bgcolor(vol_climax_buy ? color.new(color.green, 80) : na, title="Volume Climax Buy")
+    bgcolor(vol_climax_sell ? color.new(color.red, 80) : na, title="Volume Climax Sell")
+
+// ============== 統計信息 ==============
+
+if show_info
+    win_rate = (strategy.winstotal / (strategy.winstotal + strategy.losstotal + 0.001)) * 100
+    profit_factor = (strategy.grossprofit / (strategy.grossloss + 0.001))
+    
+    info_text = 
+         "Trades: " + str.tostring(strategy.winstotal + strategy.losstotal) + "
+         Win Rate: " + str.tostring(win_rate, "#0.0") + "% "
+         + "\nProfit Factor: " + str.tostring(profit_factor, "#0.00") + "
+         + "\nRSI: " + str.tostring(rsi_val, "#0") 
+         + "\nATR Ratio: " + str.tostring(atr_r, "#0.00") 
+         + "\nVol Ratio: " + str.tostring(vol_r, "#0.00")
+    
+    var table info_table = table.new(position=position.top_right, columns=1, rows=1, bgcolor=color.new(color.black, 70), border_color=color.gray)
+    table.cell(info_table, 0, 0, text=info_text, text_color=color.white, text_size=size.small)
+
+// ============== 警報 ==============
+
+alertcondition(long_entry_signal, title="Buy Alert", message="Long entry signal detected")
+alertcondition(short_entry_signal, title="Sell Alert", message="Short entry signal detected")

@@ -7,12 +7,10 @@ group_macd = "MACD"
 group_rsi = "RSI"
 group_atr = "ATR"
 group_advanced = "Advanced"
-group_risk = "Risk Management"
 group_display = "Display"
 
 initial_capital = input.float(1000, title="Initial Capital (USD)", group=group_basic)
 risk_per_trade = input.float(2.0, title="Risk Per Trade (%)", minval=0.5, maxval=5, group=group_basic)
-risk_reward_ratio = input.float(1.5, title="Risk/Reward Ratio", minval=0.5, maxval=3, group=group_basic)
 
 ma_fast_len = input.int(5, title="Fast MA Period", minval=3, maxval=20, group=group_ma)
 ma_mid_len = input.int(20, title="Mid MA Period", minval=10, maxval=50, group=group_ma)
@@ -20,7 +18,7 @@ ma_slow_len = input.int(60, title="Slow MA Period", minval=30, maxval=200, group
 
 macd_fast = input.int(12, title="MACD Fast", minval=5, maxval=35, group=group_macd)
 macd_slow = input.int(26, title="MACD Slow", minval=10, maxval=50, group=group_macd)
-macd_signal = input.int(9, title="MACD Signal", minval=5, maxval=20, group=group_macd)
+macd_signal_len = input.int(9, title="MACD Signal", minval=5, maxval=20, group=group_macd)
 
 rsi_len = input.int(14, title="RSI Period", minval=5, maxval=50, group=group_rsi)
 rsi_overbought = input.float(70, title="RSI Overbought", minval=50, maxval=90, group=group_rsi)
@@ -31,10 +29,8 @@ atr_mult_stop = input.float(2.0, title="Stop Loss ATR Multiple", minval=1, maxva
 atr_mult_profit = input.float(3.0, title="Take Profit ATR Multiple", minval=1.5, maxval=5, group=group_atr)
 
 use_divergence = input.bool(true, title="Use Divergence Detection", group=group_advanced)
-use_pattern = input.bool(true, title="Use Pattern Recognition", group=group_advanced)
 use_volume_filter = input.bool(true, title="Use Volume Filter", group=group_advanced)
 divergence_lookback = input.int(5, title="Divergence Lookback Bars", minval=2, maxval=10, group=group_advanced)
-use_trailing_stop = input.bool(true, title="Use Trailing Stop", group=group_advanced)
 
 show_ma = input.bool(true, title="Show Moving Averages", group=group_display)
 show_signals = input.bool(true, title="Show Entry Signals", group=group_display)
@@ -44,7 +40,7 @@ ma_fast = ta.sma(close, ma_fast_len)
 ma_mid = ta.sma(close, ma_mid_len)
 ma_slow = ta.sma(close, ma_slow_len)
 
-[macd_line, macd_signal_line, macd_hist] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+[macd_line, macd_signal_line, macd_hist] = ta.macd(close, macd_fast, macd_slow, macd_signal_len)
 rsi_value = ta.rsi(close, rsi_len)
 atr_value = ta.atr(atr_len)
 atr_basis = ta.sma(atr_value, 30)
@@ -55,7 +51,6 @@ volume_ratio = volume / volume_avg
 
 uptrend = ma_fast > ma_mid and ma_mid > ma_slow
 downtrend = ma_fast < ma_mid and ma_mid < ma_slow
-trend_valid = uptrend or downtrend
 
 macd_bullish = ta.crossover(macd_line, macd_signal_line) and macd_hist > 0
 macd_bearish = ta.crossunder(macd_line, macd_signal_line) and macd_hist < 0
@@ -95,19 +90,18 @@ inverted_hammer = ((close - low) < (0.1 * (high - low))) and ((high - close) > (
 bullish_engulfing = (close[1] < open[1]) and (close > open) and (open <= close[1]) and (close >= open[1])
 bearish_engulfing = (close[1] > open[1]) and (close < open) and (open >= close[1]) and (close <= open[1])
 
-long_signal = trend_valid and uptrend and momentum_bullish and volume_confirmed and (not use_divergence or bottom_divergence or hammer or bullish_engulfing)
-short_signal = trend_valid and downtrend and momentum_bearish and volume_confirmed and (not use_divergence or top_divergence or inverted_hammer or bearish_engulfing)
+long_signal = uptrend and momentum_bullish and volume_confirmed and (not use_divergence or bottom_divergence or hammer or bullish_engulfing)
+short_signal = downtrend and momentum_bearish and volume_confirmed and (not use_divergence or top_divergence or inverted_hammer or bearish_engulfing)
+
+stop_distance = atr_value * atr_mult_stop
+profit_distance = atr_value * atr_mult_profit
 
 if long_signal and strategy.position_size == 0
-    stop_distance = atr_value * atr_mult_stop
-    profit_distance = atr_value * atr_mult_profit
-    strategy.entry("Long", strategy.long)
+    strategy.entry("Long", strategy.long, when=long_signal)
     strategy.exit("Long Exit", from_entry="Long", stop=close - stop_distance, limit=close + profit_distance)
 
 if short_signal and strategy.position_size == 0
-    stop_distance = atr_value * atr_mult_stop
-    profit_distance = atr_value * atr_mult_profit
-    strategy.entry("Short", strategy.short)
+    strategy.entry("Short", strategy.short, when=short_signal)
     strategy.exit("Short Exit", from_entry="Short", stop=close + stop_distance, limit=close - profit_distance)
 
 plot(show_ma ? ma_fast : na, title="MA 5", color=color.blue, linewidth=1)
@@ -117,17 +111,21 @@ plot(show_ma ? ma_slow : na, title="MA 60", color=color.red, linewidth=1)
 plotshape(show_signals and long_signal ? long_signal : na, title="Long Signal", style=shape.labelup, location=location.belowbar, color=color.green, textcolor=color.white, size=size.small)
 plotshape(show_signals and short_signal ? short_signal : na, title="Short Signal", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.small)
 
-win_rate = (strategy.winstotal / (strategy.winstotal + strategy.losstotal + 0.001)) * 100
-profit_factor = (strategy.grossprofit / (strategy.grossloss + 0.001))
+win_count = strategy.winstotal
+loss_count = strategy.losstotal
+total_trades = win_count + loss_count
 
-info_text = "Trades: " + str.tostring(strategy.winstotal + strategy.losstotal) + "\nWin Rate: " + str.tostring(win_rate, "#0.0") + "%\nProfit Factor: " + str.tostring(profit_factor, "#0.00") + "\nRSI: " + str.tostring(rsi_value, "#0") + "\nATR Ratio: " + str.tostring(atr_ratio, "#0.00") + "\nVolume Ratio: " + str.tostring(volume_ratio, "#0.00")
+win_rate = total_trades > 0 ? (win_count / total_trades) * 100 : 0
+profit_factor = strategy.grossloss > 0 ? strategy.grossprofit / strategy.grossloss : 0
+
+info_text = "Trades: " + str.tostring(int(total_trades)) + "\nWins: " + str.tostring(int(win_count)) + "\nWin Rate: " + str.tostring(win_rate, "#0.0") + "%\nProfit Factor: " + str.tostring(profit_factor, "#0.00")
 
 var table info_table = na
 if na(info_table) and show_info
-    info_table := table.new(position=position.top_right, columns=1, rows=1, bgcolor=color.new(color.black, 70), border_color=color.gray)
+    info_table := table.new(position=position.top_right, columns=1, rows=1, bgcolor=color.new(color.black, 80), border_color=color.gray, frame_color=color.gray)
 
 if show_info and not na(info_table)
     table.cell(info_table, 0, 0, text=info_text, text_color=color.white, text_size=size.small)
 
-alertcondition(long_signal, title="Long Entry", message="Long entry signal detected")
-alertcondition(short_signal, title="Short Entry", message="Short entry signal detected")
+alertcondition(long_signal, title="Long Entry", message="Long signal")
+alertcondition(short_signal, title="Short Entry", message="Short signal")

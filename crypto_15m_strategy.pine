@@ -118,15 +118,15 @@ long_signal = trend_valid and uptrend and momentum_bullish and volume_confirmed 
 short_signal = trend_valid and downtrend and momentum_bearish and volume_confirmed and (not use_divergence or top_divergence or inverted_hammer or bearish_engulfing)
 
 // Risk Management Tracking
-var int consecutive_losses = 0
-var float session_loss = 0
+var int loss_count = 0
+var float daily_loss = 0
 
-if strategy.losspercent > 0
-    consecutive_losses += 1
-else if strategy.winstatus == strategy.win
-    consecutive_losses = 0
+if strategy.winstatus == strategy.losstrade
+    loss_count += 1
+else if strategy.winstatus == strategy.wintrade
+    loss_count := 0
 
-trading_allowed = consecutive_losses < max_consecutive_losses and session_loss < (strategy.equity * (max_daily_loss_percent / 100))
+trading_allowed = loss_count < max_consecutive_losses and daily_loss < (strategy.equity * (max_daily_loss_percent / 100))
 
 // Execute Strategy
 if long_signal and trading_allowed and strategy.position_size == 0
@@ -142,19 +142,19 @@ if short_signal and trading_allowed and strategy.position_size == 0
     strategy.exit("Short Exit", from_entry="Short", stop=close + stop_distance, limit=close - profit_distance)
 
 // Trailing Stop Logic
-var float trailing_stop_long = na
-var float trailing_stop_short = na
+var float ts_long = na
+var float ts_short = na
 
 if use_trailing_stop
     if strategy.position_size > 0
-        trailing_stop_long := max(nz(trailing_stop_long, close - atr_value * atr_mult_stop), close - atr_value * atr_mult_stop * 0.8)
+        ts_long := math.max(nz(ts_long, close - atr_value * atr_mult_stop), close - atr_value * atr_mult_stop * 0.8)
     
     if strategy.position_size < 0
-        trailing_stop_short := min(nz(trailing_stop_short, close + atr_value * atr_mult_stop), close + atr_value * atr_mult_stop * 0.8)
+        ts_short := math.min(nz(ts_short, close + atr_value * atr_mult_stop), close + atr_value * atr_mult_stop * 0.8)
 
 if strategy.position_size == 0
-    trailing_stop_long := na
-    trailing_stop_short := na
+    ts_long := na
+    ts_short := na
 
 // Visualization
 if show_ma

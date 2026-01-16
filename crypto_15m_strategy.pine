@@ -36,9 +36,6 @@ use_volume_filter = input.bool(true, title="Use Volume Filter", group=group_adva
 divergence_lookback = input.int(5, title="Divergence Lookback Bars", minval=2, maxval=10, group=group_advanced)
 use_trailing_stop = input.bool(true, title="Use Trailing Stop", group=group_advanced)
 
-max_consecutive_losses = input.int(3, title="Max Consecutive Losses", minval=1, maxval=10, group=group_risk)
-max_daily_loss_percent = input.float(3.0, title="Max Daily Loss %", minval=1, maxval=10, group=group_risk)
-
 show_ma = input.bool(true, title="Show Moving Averages", group=group_display)
 show_signals = input.bool(true, title="Show Entry Signals", group=group_display)
 show_info = input.bool(true, title="Show Statistics", group=group_display)
@@ -101,29 +98,17 @@ bearish_engulfing = (close[1] > open[1]) and (close < open) and (open >= close[1
 long_signal = trend_valid and uptrend and momentum_bullish and volume_confirmed and (not use_divergence or bottom_divergence or hammer or bullish_engulfing)
 short_signal = trend_valid and downtrend and momentum_bearish and volume_confirmed and (not use_divergence or top_divergence or inverted_hammer or bearish_engulfing)
 
-var int loss_count = 0
-
-loss_count := strategy.winstatus == strategy.losstrade ? loss_count + 1 : (strategy.winstatus == strategy.wintrade ? 0 : loss_count)
-
-trading_allowed = loss_count < max_consecutive_losses
-
-if long_signal and trading_allowed and strategy.position_size == 0
+if long_signal and strategy.position_size == 0
     stop_distance = atr_value * atr_mult_stop
     profit_distance = atr_value * atr_mult_profit
     strategy.entry("Long", strategy.long)
     strategy.exit("Long Exit", from_entry="Long", stop=close - stop_distance, limit=close + profit_distance)
 
-if short_signal and trading_allowed and strategy.position_size == 0
+if short_signal and strategy.position_size == 0
     stop_distance = atr_value * atr_mult_stop
     profit_distance = atr_value * atr_mult_profit
     strategy.entry("Short", strategy.short)
     strategy.exit("Short Exit", from_entry="Short", stop=close + stop_distance, limit=close - profit_distance)
-
-var float ts_long = na
-var float ts_short = na
-
-ts_long := use_trailing_stop and strategy.position_size > 0 ? math.max(nz(ts_long, close - atr_value * atr_mult_stop), close - atr_value * atr_mult_stop * 0.8) : na
-ts_short := use_trailing_stop and strategy.position_size < 0 ? math.min(nz(ts_short, close + atr_value * atr_mult_stop), close + atr_value * atr_mult_stop * 0.8) : na
 
 plot(show_ma ? ma_fast : na, title="MA 5", color=color.blue, linewidth=1)
 plot(show_ma ? ma_mid : na, title="MA 20", color=color.orange, linewidth=1)

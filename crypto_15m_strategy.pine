@@ -103,10 +103,7 @@ short_signal = trend_valid and downtrend and momentum_bearish and volume_confirm
 
 var int loss_count = 0
 
-if strategy.winstatus == strategy.losstrade
-    loss_count += 1
-else if strategy.winstatus == strategy.wintrade
-    loss_count := 0
+loss_count := strategy.winstatus == strategy.losstrade ? loss_count + 1 : (strategy.winstatus == strategy.wintrade ? 0 : loss_count)
 
 trading_allowed = loss_count < max_consecutive_losses
 
@@ -125,15 +122,8 @@ if short_signal and trading_allowed and strategy.position_size == 0
 var float ts_long = na
 var float ts_short = na
 
-if use_trailing_stop
-    if strategy.position_size > 0
-        ts_long := math.max(nz(ts_long, close - atr_value * atr_mult_stop), close - atr_value * atr_mult_stop * 0.8)
-    if strategy.position_size < 0
-        ts_short := math.min(nz(ts_short, close + atr_value * atr_mult_stop), close + atr_value * atr_mult_stop * 0.8)
-
-if strategy.position_size == 0
-    ts_long := na
-    ts_short := na
+ts_long := use_trailing_stop and strategy.position_size > 0 ? math.max(nz(ts_long, close - atr_value * atr_mult_stop), close - atr_value * atr_mult_stop * 0.8) : na
+ts_short := use_trailing_stop and strategy.position_size < 0 ? math.min(nz(ts_short, close + atr_value * atr_mult_stop), close + atr_value * atr_mult_stop * 0.8) : na
 
 plot(show_ma ? ma_fast : na, title="MA 5", color=color.blue, linewidth=1)
 plot(show_ma ? ma_mid : na, title="MA 20", color=color.orange, linewidth=1)
@@ -142,15 +132,16 @@ plot(show_ma ? ma_slow : na, title="MA 60", color=color.red, linewidth=1)
 plotshape(show_signals and long_signal ? long_signal : na, title="Long Signal", style=shape.labelup, location=location.belowbar, color=color.green, textcolor=color.white, size=size.small)
 plotshape(show_signals and short_signal ? short_signal : na, title="Short Signal", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.small)
 
-if show_info
-    win_rate = (strategy.winstotal / (strategy.winstotal + strategy.losstotal + 0.001)) * 100
-    profit_factor = (strategy.grossprofit / (strategy.grossloss + 0.001))
-    
-    info_text = "Trades: " + str.tostring(strategy.winstotal + strategy.losstotal) + "\nWin Rate: " + str.tostring(win_rate, "#0.0") + "%\nProfit Factor: " + str.tostring(profit_factor, "#0.00") + "\nRSI: " + str.tostring(rsi_value, "#0") + "\nATR Ratio: " + str.tostring(atr_ratio, "#0.00") + "\nVolume Ratio: " + str.tostring(volume_ratio, "#0.00")
-    
-    var table info_table = na
-    if na(info_table)
-        info_table := table.new(position=position.top_right, columns=1, rows=1, bgcolor=color.new(color.black, 70), border_color=color.gray)
+win_rate = (strategy.winstotal / (strategy.winstotal + strategy.losstotal + 0.001)) * 100
+profit_factor = (strategy.grossprofit / (strategy.grossloss + 0.001))
+
+info_text = "Trades: " + str.tostring(strategy.winstotal + strategy.losstotal) + "\nWin Rate: " + str.tostring(win_rate, "#0.0") + "%\nProfit Factor: " + str.tostring(profit_factor, "#0.00") + "\nRSI: " + str.tostring(rsi_value, "#0") + "\nATR Ratio: " + str.tostring(atr_ratio, "#0.00") + "\nVolume Ratio: " + str.tostring(volume_ratio, "#0.00")
+
+var table info_table = na
+if na(info_table) and show_info
+    info_table := table.new(position=position.top_right, columns=1, rows=1, bgcolor=color.new(color.black, 70), border_color=color.gray)
+
+if show_info and not na(info_table)
     table.cell(info_table, 0, 0, text=info_text, text_color=color.white, text_size=size.small)
 
 alertcondition(long_signal, title="Long Entry", message="Long entry signal detected")
